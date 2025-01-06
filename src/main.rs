@@ -1,4 +1,5 @@
 use anyhow::Result;
+use bore_cli::shared::CONTROL_PORT;
 use bore_cli::{client::Client, server::Server};
 use clap::{error::ErrorKind, CommandFactory, Parser, Subcommand};
 
@@ -44,6 +45,10 @@ enum Command {
         #[clap(long, default_value_t = 65535, env = "BORE_MAX_PORT")]
         max_port: u16,
 
+        /// Port that bore server should run on.
+        #[clap(long, default_value_t = CONTROL_PORT, env = "BORE_SERVER_PORT")]
+        server_port: u16,
+
         /// Optional secret for authentication.
         #[clap(short, long, env = "BORE_SECRET", hide_env_values = true)]
         secret: Option<String>,
@@ -66,6 +71,7 @@ async fn run(command: Command) -> Result<()> {
         Command::Server {
             min_port,
             max_port,
+            server_port,
             secret,
         } => {
             let port_range = min_port..=max_port;
@@ -74,7 +80,9 @@ async fn run(command: Command) -> Result<()> {
                     .error(ErrorKind::InvalidValue, "port range is empty")
                     .exit();
             }
-            Server::new(port_range, secret.as_deref()).listen().await?;
+            Server::new(port_range, server_port, secret.as_deref())
+                .listen()
+                .await?;
         }
     }
 

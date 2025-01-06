@@ -5,6 +5,7 @@ use std::sync::Arc;
 use anyhow::{bail, Context, Result};
 use tokio::{io::AsyncWriteExt, net::TcpStream, time::timeout};
 use tracing::{error, info, info_span, warn, Instrument};
+use url::Url;
 use uuid::Uuid;
 
 use crate::auth::Authenticator;
@@ -19,6 +20,9 @@ pub struct Client {
 
     /// Destination address of the server.
     to: String,
+
+    /// Destination port of the server.
+    to_port: u16,
 
     // Local host that is forwarded.
     local_host: String,
@@ -42,7 +46,21 @@ impl Client {
         port: u16,
         secret: Option<&str>,
     ) -> Result<Self> {
-        let mut stream = Delimited::new(connect_with_timeout(to, CONTROL_PORT).await?);
+        let parsed_url = Url::parse(to)?;
+
+        let target_port = if let Some(port) = parsed_url.port() {
+            port
+        } else {
+            CONTROL_PORT
+        };
+
+        let host = if let Some(possible_host) = parsed_url.host_str() {
+            possible_host
+        } else {
+            bail!("the given host is invalid.")
+        };
+
+        let mut stream = Delimited::new(connect_with_timeout(host, target_port).await?);
         let auth = secret.map(Authenticator::new);
         if let Some(auth) = &auth {
             auth.client_handshake(&mut stream).await?;
@@ -59,11 +77,12 @@ impl Client {
             None => bail!("unexpected EOF"),
         };
         info!(remote_port, "connected to server");
-        info!("listening at {to}:{remote_port}");
+        info!("listening at {host}:{remote_port}");
 
         Ok(Client {
             conn: Some(stream),
-            to: to.to_string(),
+            to: host.to_string(),
+            to_port: target_port,
             local_host: local_host.to_string(),
             local_port,
             remote_port,
@@ -106,7 +125,7 @@ impl Client {
 
     async fn handle_connection(&self, id: Uuid) -> Result<()> {
         let mut remote_conn =
-            Delimited::new(connect_with_timeout(&self.to[..], CONTROL_PORT).await?);
+            Delimited::new(connect_with_timeout(&self.to[..], self.to_port).await?);
         if let Some(auth) = &self.auth {
             auth.client_handshake(&mut remote_conn).await?;
         }
